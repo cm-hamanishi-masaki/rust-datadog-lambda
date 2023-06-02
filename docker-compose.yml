@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+
+  datadog-agent:
+    image: datadog/agent:7
+    environment:
+      - DD_API_KEY=1d571d23ec2544fe5ef7d0c27080c128 # 浜西個人垢。そのうち無料期間が切れるので要対応
+      - DD_SITE=ap1.datadoghq.com
+      - DD_SERVICE=test01
+      - DD_ENV=test-env
+      - DD_LOG_LEVEL=info # warn
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+    ports:
+      - "8126:8126"
