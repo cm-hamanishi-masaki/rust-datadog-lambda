@@ -1,12 +1,11 @@
 mod datadog;
 
 use lambda_http::{run, service_fn, Body, Error, Request, Response};
-use tracing::{debug, info, instrument, Level};
+use tracing::{info, instrument, Level};
 use tracing_subscriber::filter::Targets;
-// use tracing_subscriber::fmt::time::OffsetTime;
-use tracing_subscriber::Layer;
-use tracing_subscriber::layer::{ SubscriberExt};
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 /// This is the main body for the function.
 /// Write your code inside it.
@@ -14,7 +13,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// - https://github.com/awslabs/aws-lambda-rust-runtime/tree/main/examples
 async fn handle_request(_req: Request) -> Result<Response<Body>, Error> {
     info!("start process request");
-    let message = format!("Hello");
+    let message = "Hello";
     get_some().await;
     let resp = Response::builder()
         .status(200)
@@ -45,7 +44,8 @@ async fn main() -> Result<(), Error> {
     //     // .with_timer(OffsetTime::new(offset, time_format))
     //     ;
 
-    let json_logger = tracing_subscriber::fmt::layer().json()
+    let json_logger = tracing_subscriber::fmt::layer()
+        .json()
         .without_time()
         .with_current_span(false)
         .with_span_list(true)
@@ -55,9 +55,7 @@ async fn main() -> Result<(), Error> {
     // Datadog Tracing Layer
     // 外部クレートの中で作成されている tracing::span も対象になるので、フィルター設定に注意
     // なおdatadog-agentの設定でSpanをフィルタする機能もあるらしい
-    let datadog_tracing = datadog::DatadogTracingLayer::new()
-        .with_filter(Targets::new()
-            .with_default(Level::INFO));
+    let datadog_tracing = datadog::TracingLayer::new().with_filter(Targets::new().with_default(Level::INFO));
 
     tracing_subscriber::registry()
         .with(json_logger)
@@ -66,5 +64,6 @@ async fn main() -> Result<(), Error> {
 
     run(service_fn(|req: Request| async {
         datadog::handle_request_with_trace(req, handle_request).await
-    })).await
+    }))
+    .await
 }

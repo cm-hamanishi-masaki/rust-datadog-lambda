@@ -1,32 +1,31 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::cell::{ RefCell};
-use std::future::Future;
 use chrono::{DateTime, Utc};
-use lambda_http::http::{HeaderMap, HeaderValue};
 use lambda_http::http::header::CONTENT_TYPE;
-use lambda_http::{Body, Request, RequestExt};
+use lambda_http::http::{HeaderMap, HeaderValue};
 use lambda_http::request::RequestContext;
+use lambda_http::{Body, Request, RequestExt};
 use lambda_runtime::Error;
 use rand::Rng;
 use serde::Serialize;
-use tracing::span::{Attributes, Record};
-use tracing::{Id, info, info_span, warn};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::future::Future;
 use tracing::field::Field;
-use tracing_subscriber::Layer;
+use tracing::span::{Attributes, Record};
+use tracing::{info_span, warn, Id};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
-
+use tracing_subscriber::Layer;
 
 pub async fn handle_request_with_trace<Fut>(
     req: Request, f: impl FnOnce(Request) -> Fut,
 ) -> Result<lambda_http::Response<Body>, Error>
-    where
-        Fut: Future<Output = Result<lambda_http::Response<Body>, Error>>,
+where
+    Fut: Future<Output = Result<lambda_http::Response<Body>, Error>>,
 {
     // リクエスト元のトレースと繋げる場合、ヘッダでトレーシングID情報が渡されるはずなのでそれを引き継ぐ。無ければ新規採番
-    let trace_id = TraceId::from_header(&req.headers()).unwrap_or(TraceId::new());
-    let parent_id = ParentSpanId::from_header(&req.headers()).unwrap_or(ParentSpanId::new());
+    let trace_id = TraceId::from_header(req.headers()).unwrap_or_else(TraceId::new);
+    let parent_id = ParentSpanId::from_header(req.headers()).unwrap_or_else(ParentSpanId::new);
     // TraceIdをThreadLocalに保存
     TraceId::store(trace_id);
 
@@ -45,11 +44,11 @@ pub async fn handle_request_with_trace<Fut>(
     let apigw_ctx = req.request_context();
     let RequestContext::ApiGatewayV1(rest_api_ctx) = apigw_ctx;
     let path = rest_api_ctx.path.unwrap();
-    let span = info_span!( // その他Datadogに送るSpanに設定する情報をセット
+    let span = info_span!(
+        // その他Datadogに送るSpanに設定する情報をセット
         "handle_request_root",
-        dd.trace_id = trace_id.0, // ここで渡さなくてもTraceは親Spanから取得できるが、ログとトレースのマージのためにどこかでログ内にTraceIdを含めておきたいので
+        dd.trace_id = trace_id.0, // ログとトレースのマージのためにどこかでログ内にTraceIdを含めておきたい意図あり
         dd.parent_id = parent_id.0,
-
         // 以下任意でDatadogに渡したい値をセットして下さい。以下は一例です。
         // 後から `span.record(..)` で更新するケースでも、このタイミングで宣言しておく必要があります。
         dd.resource = path,
@@ -76,10 +75,11 @@ pub async fn handle_request_with_trace<Fut>(
     }
 }
 
-
 /// Reqwestを使ったHTTP処理において、Datadog用のトレース処理を挿入する関数。
 /// 引数(リクエスト)やその他の属性をセットし、また処理結果をトレースに反映する。
-pub async fn request_http(client: &reqwest::Client, mut req: reqwest::Request) -> Result<reqwest::Response, reqwest::Error> {
+pub async fn request_http(
+    client: &reqwest::Client, mut req: reqwest::Request,
+) -> Result<reqwest::Response, reqwest::Error> {
     let span = info_span!(
         "reqwest.http",
         dd.resource = req.url().to_string(),
@@ -89,11 +89,13 @@ pub async fn request_http(client: &reqwest::Client, mut req: reqwest::Request) -
         dd.meta.http.status_code = tracing::field::Empty,
         dd.meta.error.msg = None::<String>,
     );
+    let _enter = span.enter();
+
+    // リクエストヘッダにトレーシング用ヘッダを追加
     let trace_id = TraceId::get_current();
     let h = req.headers_mut();
     h.insert(TRACE_ID_HEADER, trace_id.0.into());
     h.insert(PARENT_ID_HEADER, span.id().unwrap().into_u64().into());
-    let _enter = span.enter();
     match client.execute(req).await {
         Ok(ret) => {
             span.record("dd.meta.http.status_code", ret.status().as_u16());
@@ -111,7 +113,6 @@ pub async fn request_http(client: &reqwest::Client, mut req: reqwest::Request) -
         }
     }
 }
-
 
 thread_local!(static TRACE_ID: RefCell<TraceId> = RefCell::new(TraceId::new()));
 const TRACE_ID_HEADER: &str = "x-datadog-trace-id";
@@ -137,9 +138,7 @@ impl TraceId {
     }
 
     pub fn get_current() -> Self {
-        TRACE_ID.with(|f| {
-            *f.borrow()
-        })
+        TRACE_ID.with(|f| *f.borrow())
     }
 }
 
@@ -165,14 +164,14 @@ fn gen_span_id() -> u64 {
     rng.gen::<u64>()
 }
 
-pub struct DatadogTracingLayer {
+pub struct TracingLayer {
     client: reqwest::Client,
     service_name: String,
 }
 
-impl DatadogTracingLayer {
-    pub fn new() ->Self {
-        DatadogTracingLayer {
+impl TracingLayer {
+    pub fn new() -> Self {
+        TracingLayer {
             client: reqwest::Client::new(),
             service_name: "test01".to_string(),
         }
@@ -201,17 +200,17 @@ impl DatadogTracingLayer {
     }
 
     fn with_dd_span<'a, S>(span: SpanRef<'a, S>, f: impl FnOnce(&mut DDSpan))
-    where S: tracing_subscriber::registry::LookupSpan<'a> {
-        span.extensions_mut()
-            .get_mut::<DDSpan>()
-            .map(f);
+    where
+        S: LookupSpan<'a>,
+    {
+        span.extensions_mut().get_mut::<DDSpan>().map(f);
     }
 }
 
-impl<S> Layer<S> for DatadogTracingLayer
-    where
-        S: tracing::Subscriber,
-        S: for<'lookup> LookupSpan<'lookup>,
+impl<S> Layer<S> for TracingLayer
+where
+    S: tracing::Subscriber,
+    S: for<'lookup> LookupSpan<'lookup>,
 {
     /// spanが作成された時に呼ばれる。
     /// AttributesなどからDatadog用のStruct(DDSpan)を作成する。
@@ -231,7 +230,7 @@ impl<S> Layer<S> for DatadogTracingLayer
         let ids = span.parent().and_then(|s| {
             s.extensions_mut()
                 .get_mut::<DDSpan>()
-                .and_then(|ds| Some((ds.trace_id, ds.span_id)))
+                .map(|ds| (ds.trace_id, ds.span_id))
         });
         let ids = ids.unwrap_or((TraceId::new().0, 0));
         let mut dd_span = DDSpan {
@@ -295,9 +294,9 @@ struct DDSpan {
     #[serde(skip_serializing_if = "DDSpan::is_zero")]
     parent_id: u64,
     span_id: u64,
-    start: u64,    // epoch nano
-    duration: u64, // nano sec from start
-    service: String,// 必須。ddagentの方の環境変数で指定してても省略不可
+    start: u64,      // epoch nano
+    duration: u64,   // nano sec from start
+    service: String, // 必須。ddagentの方の環境変数で指定してても省略不可
     resource: String,
     error: i32,
     meta: HashMap<String, String>,
@@ -352,7 +351,9 @@ struct DDSpanUpdator<'a>(&'a mut DDSpan);
 #[allow(clippy::single_match)]
 impl tracing::field::Visit for DDSpanUpdator<'_> {
     fn record_i64(&mut self, field: &Field, value: i64) {
-        if !field.name().starts_with("dd.") { return }
+        if !field.name().starts_with("dd.") {
+            return;
+        }
         match field.name() {
             "dd.meta.http.status_code" => {
                 self.0.meta.insert("http.status_code".to_string(), value.to_string());
@@ -361,6 +362,9 @@ impl tracing::field::Visit for DDSpanUpdator<'_> {
         }
     }
     fn record_u64(&mut self, field: &Field, value: u64) {
+        if !field.name().starts_with("dd.") {
+            return;
+        }
         match field.name() {
             "dd.trace_id" => {
                 self.0.trace_id = value;
@@ -372,7 +376,9 @@ impl tracing::field::Visit for DDSpanUpdator<'_> {
         }
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
-        if !field.name().starts_with("dd.") { return }
+        if !field.name().starts_with("dd.") {
+            return;
+        }
         match field.name() {
             "dd.error" => {
                 self.0.error = i32::from(value) // trueなら1;
@@ -381,7 +387,9 @@ impl tracing::field::Visit for DDSpanUpdator<'_> {
         }
     }
     fn record_str(&mut self, field: &Field, value: &str) {
-        if !field.name().starts_with("dd.") { return }
+        if !field.name().starts_with("dd.") {
+            return;
+        }
         match field.name() {
             "dd.resource" => {
                 println!("*** resource ****  {value}");
@@ -406,11 +414,9 @@ impl tracing::field::Visit for DDSpanUpdator<'_> {
         }
     }
     fn record_debug(&mut self, field: &Field, _value: &dyn Debug) {
-        if !field.name().starts_with("dd.") { return }
-        match field.name() {
-            _ => {
-                warn!("{} is not yet implemented", field.name())
-            }
+        if !field.name().starts_with("dd.") {
+            return;
         }
+        warn!("{} is not yet implemented", field.name());
     }
 }
