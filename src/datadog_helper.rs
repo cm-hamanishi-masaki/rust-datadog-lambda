@@ -44,8 +44,8 @@ where
     let apigw_ctx = req.request_context();
     let RequestContext::ApiGatewayV1(rest_api_ctx) = apigw_ctx;
     let path = rest_api_ctx.path.unwrap();
+    // RootSpanを作成する
     let span = info_span!(
-        // その他Datadogに送るSpanに設定する情報をセット
         "handle_request_root",
         dd.trace_id = trace_id.0, // ログとトレースのマージのためにどこかでログ内にTraceIdを含めておきたい意図あり
         dd.parent_id = parent_id.0,
@@ -164,21 +164,38 @@ fn gen_span_id() -> u64 {
     rng.gen::<u64>()
 }
 
+struct TracingConfig {
+    pub service_name: String,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        TracingConfig {
+            service_name: "".to_string(),
+        }
+    }
+}
+
 pub struct TracingLayer {
+    config: TracingConfig,
     client: reqwest::Client,
-    service_name: String,
 }
 
 impl TracingLayer {
     pub fn new() -> Self {
         TracingLayer {
+            config: TracingConfig::default(),
             client: reqwest::Client::new(),
-            service_name: "test01".to_string(),
         }
     }
 
+    pub fn with_service_name(mut self, service_name: &str) -> Self {
+        self.config.service_name = service_name.to_string();
+        self
+    }
+
     fn send_to_datadog_agent(&self, span: &mut DDSpan) {
-        span.service = self.service_name.to_owned();
+        span.service = self.config.service_name.to_owned();
         let json = serde_json::to_string(&span).unwrap();
         let body = format!("[[{}]]", json); // spanを複数同時に送信可能だがlocalhost宛なので、、
         let endpoint = "http://localhost:8126/v0.3/traces";
