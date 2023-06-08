@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = [ "otel_dd" ]
+default = [ "owned" ]
 
 owned = [] # 独自実装版
 otel_dd = [ # opentelemetry-datadog版

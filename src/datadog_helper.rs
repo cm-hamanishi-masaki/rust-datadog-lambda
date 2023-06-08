@@ -201,7 +201,7 @@ impl TracingLayer {
         let endpoint = "http://localhost:8126/v0.3/traces";
         let client = self.client.clone();
         tokio::spawn(async move {
-            println!("@@ will send to ddagent: {}", body);
+            // println!("@@ will send to ddagent: {}", body);
             if let Err(e) = client
                 .post(endpoint)
                 .header(CONTENT_TYPE, "application/json")
@@ -234,13 +234,6 @@ where
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).unwrap();
         let name = span.name().to_string();
-        // let (id1, id2) = TRACING_IDS.with(|ids| {
-        //     (ids.borrow().0, ids.borrow().1)
-        // });
-        // let mut dd_span = TRACING_IDS.with(|ids| {
-        //     DDSpan::new(name, ids.borrow(), id)
-        // });
-        // let ids = TracingIds::get_current();
 
         // 親SpanからTraceId(と親のSpanId)を取得する
         // 親がいなかったり、親が持ってない場合は新規採番するが、最終的にAttributesの値が反映される
@@ -409,7 +402,6 @@ impl tracing::field::Visit for DDSpanUpdator<'_> {
         }
         match field.name() {
             "dd.resource" => {
-                println!("*** resource ****  {value}");
                 self.0.resource = value.to_string();
             }
             "dd.meta.request_id" => {

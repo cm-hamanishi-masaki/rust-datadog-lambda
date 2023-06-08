@@ -32,6 +32,7 @@ fn get_logger() -> Filtered<tracing_subscriber::fmt::Layer<Registry, JsonFields,
 #[cfg(feature = "owned")]
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    use std::time::Duration;
     println!("--- owned mode --------------");
 
     // Datadog Tracing Layer
@@ -48,7 +49,8 @@ async fn main() -> Result<(), Error> {
     }))
     .await?;
 
-    //TODO BackgroundでAPIにPostしてる可能性があるので、異常終了に備えてWaitさせる必要あり
+    // BackgroundでAPIにPostしてる可能性があるので、異常終了に備えてWaitさせる必要あり
+    tokio::time::sleep(Duration::from_millis(500)).await;
     Ok(())
 }
 
