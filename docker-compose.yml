@@ -5,7 +5,7 @@ services:
   datadog-agent:
     image: datadog/agent:7
     environment:
-      - DD_API_KEY=1d571d23ec2544fe5ef7d0c27080c128 # 浜西個人垢。無料期間切れてるのでログが回収されない？？
+      - DD_API_KEY=
       - DD_SITE=ap1.datadoghq.com
       - DD_SERVICE=test01
       - DD_ENV=test-env
