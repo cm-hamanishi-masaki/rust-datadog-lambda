@@ -1,7 +1,8 @@
 use lambda_http::{run, service_fn, Body, Request, Response};
 use lambda_runtime::Error;
 use std::sync::Mutex;
-use tracing::{error, info, instrument, Level};
+use tracing::{error, info, instrument, Level, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::filter::{Filtered, Targets};
 use tracing_subscriber::fmt::format::{Format, Json, JsonFields};
 use tracing_subscriber::layer::SubscriberExt;

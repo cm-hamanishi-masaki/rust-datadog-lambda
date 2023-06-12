@@ -13,6 +13,10 @@ use std::future::Future;
 use tracing::info_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+const DD_TRACE_ID_HEADER: &str = "x-datadog-trace-id";
+const DD_PARENT_ID_HEADER: &str = "x-datadog-parent-id";
+const DD_SAMPLING_PRIORITY_HEADER: &str = "x-datadog-sampling-priority";
+
 fn gen_trace_id() -> u64 {
     let mut rng = rand::thread_rng();
     rng.gen::<u64>()
@@ -72,8 +76,9 @@ where
             propagator.extract(&HeaderExtractor(req.headers()))
         } else {
             let mut map = HashMap::new();
-            map.insert("x-datadog-trace-id".to_string(), gen_trace_id().to_string());
-            map.insert("x-datadog-parent-id".to_string(), "0".to_string());
+            map.insert(DD_TRACE_ID_HEADER.to_string(), gen_trace_id().to_string());
+            map.insert(DD_PARENT_ID_HEADER.to_string(), "0".to_string());
+            map.insert(DD_SAMPLING_PRIORITY_HEADER.to_string(), "1".to_string()); // SamplingPriority.AutoKeep
             propagator.extract(&map)
         }
     });
