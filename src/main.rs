@@ -12,6 +12,7 @@ use tracing_subscriber::{Layer, Registry};
 #[cfg_attr(feature = "owned", path = "datadog_helper.rs")]
 #[cfg_attr(not(feature = "owned"), path = "otel_helper.rs")]
 pub mod helper;
+mod span_processor;
 
 fn get_logger() -> Filtered<tracing_subscriber::fmt::Layer<Registry, JsonFields, Format<Json, ()>>, Targets, Registry> {
     let log_filter = Targets::new()
@@ -48,12 +49,9 @@ async fn main() -> Result<(), Error> {
     run(service_fn(|req: Request| async {
         helper::handle_request_with_trace(req, handle_request).await
     }))
-    .await?;
-
-    // BackgroundでAPIにPostしてる可能性があるので、異常終了に備えてWaitさせる必要あり
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    Ok(())
+    .await
 }
+
 
 /// opentelemetry_datadog 使用版
 #[cfg(feature = "otel_dd")]
@@ -64,13 +62,17 @@ async fn main() -> Result<(), Error> {
     use opentelemetry_datadog::DatadogPropagator;
     use opentelemetry_sdk::trace;
     use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
+    use opentelemetry_api::global;
+    use opentelemetry_api::trace::TracerProvider;
     println!("--- otel_dd mode --------------");
 
     // tracerに opentelemetry_datadog を使用する
-    let tracer = opentelemetry_datadog::new_pipeline()
+    let builder = opentelemetry_datadog::new_pipeline()
         .with_service_name("test-otel-dd")
         .with_api_version(opentelemetry_datadog::ApiVersion::Version05)
         .with_agent_endpoint("http://localhost:8126")
+        .with_env("test")
+        .with_service_name("test-otel-dd")
         .with_name_mapping(|span, _config| {
             // デフォルトでは全て 'opentelemetry-datadog' になってしまうので要変更
             span.name.as_ref()
@@ -81,15 +83,20 @@ async fn main() -> Result<(), Error> {
             let key = Key::from_static_str("resource");
             match span.attributes.get(&key) {
                 Some(String(v)) => v.as_str(),
-                _ => "", //但し空文字だとDatadog上ではspan.nameで代替されるが
+                _ => span.name.as_ref(), // `resource` はOtelでは任意だがトレーシングAPIではMust
             }
-        })
-        .with_trace_config(
-            trace::config()
-                .with_sampler(Sampler::AlwaysOn)
-                .with_id_generator(RandomIdGenerator::default()),
-        )
-        .install_batch(opentelemetry::runtime::Tokio)?;
+        });
+    // 独自のSpanProcessorを使用する
+    let exporter = builder.build_exporter().unwrap();
+    let processor = span_processor::SpanProcessor::new(Box::new(exporter));
+    let provider = trace::TracerProvider::builder()
+        .with_span_processor(processor)
+        .with_config(trace::config()
+             .with_sampler(Sampler::AlwaysOn)
+             .with_id_generator(RandomIdGenerator::default()))
+        .build();
+    let tracer = provider.versioned_tracer("opentelemetry-datadog", Some(env!("CARGO_PKG_VERSION")), None);
+    let _ = global::set_tracer_provider(provider);
 
     let tracing = tracing_opentelemetry::layer()
         .with_tracer(tracer)
@@ -106,10 +113,7 @@ async fn main() -> Result<(), Error> {
     run(service_fn(|req: Request| async {
         helper::handle_request_with_trace(req, handle_request).await
     }))
-    .await?;
-
-    opentelemetry::global::shutdown_tracer_provider();
-    Ok(())
+    .await
 }
 
 /// opentelemetry_otlp 使用版
@@ -133,8 +137,9 @@ async fn main() -> Result<(), Error> {
         .with_exporter(
             opentelemetry_otlp::new_exporter()
                 .tonic()
-                .with_endpoint("http://localhost:4317"), // .with_timeout(Duration::from_secs(3))
-                                                         // .with_metadata(map)
+                .with_endpoint("http://localhost:4317"),
+            // .with_timeout(Duration::from_secs(3))
+            // .with_metadata(map)
         )
         .with_trace_config(
             trace::config()
@@ -157,10 +162,7 @@ async fn main() -> Result<(), Error> {
     run(service_fn(|req: Request| async {
         helper::handle_request_with_trace(req, handle_request).await
     }))
-    .await?;
-
-    opentelemetry::global::shutdown_tracer_provider();
-    Ok(())
+    .await
 }
 
 /// 適当な実装
